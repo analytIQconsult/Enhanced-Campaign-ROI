@@ -2,7 +2,9 @@
 title: "TheCompleteJourneyAnalysis"
 author: "analytIQconsult"
 date: "`r Sys.Date()`"
-output: html_document
+output: 
+  md_document:
+    variant: gfm
 ---
 
 ```{r setup, include=FALSE}
