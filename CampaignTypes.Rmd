@@ -1,0 +1,544 @@
+---
+title: "TheCompleteJourneyAnalysis"
+author: "analytIQconsult"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+Business Problem
+In the ever-competitive grocery market, ensuring that marketing campaigns and promotions not only reach the target audience but also compel them to make purchases is crucial. Regork, a national grocery chain, employs various marketing campaigns and promotions to enhance its market reach and elevate sales. However, the effectiveness of these campaigns and their genuine impact on purchasing behaviors among diverse customer segments remain intricate puzzles.
+
+Objective
+The objective of our analysis is to unravel the nuances of marketing and campaign effectiveness by exploring the relationship between promotional activities, customer demographics, and purchasing behaviors. We intend to delve into questions such as:
+
+Which campaigns have demonstrated substantial influence on purchasing?
+Are there specific customer demographics that are more responsive to particular campaigns or promotions?
+What products are most often purchased under promotional campaigns?
+Is there a noticeable uplift in sales during and after campaigns?
+Significance
+Understanding the dynamics of campaign effectiveness allows Regork to:
+
+Allocate marketing budget more judiciously, maximizing ROI.
+Tailor future campaigns to be more resonant with specific customer segments.
+Identify and optimize the timing, duration, and featured products of campaigns.
+Enhance customer engagement and satisfaction by offering relevant promotions.
+Methodology
+To navigate through this, we will:
+
+Merge transactional data with campaign and product information, creating a consolidated view of customer purchases in relation to promotional campaigns.
+Perform exploratory data analysis to identify patterns, anomalies, or trends in purchasing behavior during campaigns.
+Explore customer demographics to understand who is most influenced by campaigns.
+Evaluate the impact of promotions on sales volumes during and post-campaign periods.
+Implications
+Our analysis will pave the way to:
+
+Forge data-driven marketing strategies that amplify sales and customer engagement.
+Identify opportunities to enhance campaign effectiveness, targeting, and timing.
+Recognize potential areas for growth and further investment in specific product categories or customer segments.
+
+Load Packages
+```{r}
+
+library(completejourney) 
+library(tidyverse) 
+library(lubridate)  
+library(scales)     
+library(ggplot2) 
+library(data.table)
+library(gridExtra)
+
+#options(warn=-1)
+```
+
+Data Import and Cleaning
+```{r}
+transactions <- get_transactions()
+clean_data <- function(data, required_cols){
+  data %>%
+    select(all_of(required_cols)) %>%
+    filter(across(all_of(required_cols), ~!is.na(.))) %>%
+    distinct()
+}
+
+selected_transactions <- clean_data(transactions, c("household_id", "product_id", "store_id", "quantity", "sales_value", "week", "retail_disc", "coupon_disc", "coupon_match_disc"))
+selected_products <- clean_data(products, c("manufacturer_id", "product_id", "department", "product_category", "product_type"))
+selected_campaigns <- clean_data(campaigns, c("campaign_id", "household_id"))
+selected_coupons <- clean_data(coupons, c("campaign_id", "product_id", "coupon_upc"))
+selected_coupon_redemptions <- clean_data(coupon_redemptions, c("campaign_id", "household_id", "coupon_upc","redemption_date"))
+selected_demographics <- clean_data(demographics, c("age", "household_id", "income","marital_status","household_size"))
+
+dt_selected_transactions <- as.data.table(selected_transactions)
+dt_selected_transactions[, campaign_cost := abs(retail_disc) + abs(coupon_disc) + abs(coupon_match_disc)]
+dt_selected_transactions[, net_profit := sales_value - 0.5 * sales_value - campaign_cost]
+dt_selected_coupons <- as.data.table(selected_coupons)
+dt_selected_campaigns <- as.data.table(selected_campaigns)
+dt_selected_coupon_redemptions <- as.data.table(selected_coupon_redemptions)
+dt_selected_demographics <- as.data.table(selected_demographics)
+dt_selected_campaign_descriptions <- as.data.table(campaign_descriptions)
+```
+
+1. Which campaigns have demonstrated substantial influence on purchasing?
+Top/Bottom Performing Campains With Coupons
+
+```{r}
+setDTthreads(threads = getOption("datatable.threads"))
+options(datatable.allow.cartesian=TRUE)
+
+
+analysis_data_with_coupons <- dt_selected_transactions[
+  dt_selected_coupon_redemptions, 
+  on = "household_id",
+  nomatch = 0L
+]
+
+
+campaign_impact <- analysis_data_with_coupons[, .(
+    total_sales = sum(sales_value, na.rm = TRUE),
+    total_transactions = .N,
+    avg_sales_per_transaction = mean(sales_value, na.rm = TRUE),
+    total_quantity = sum(quantity, na.rm = TRUE)
+  ), by = campaign_id
+][order(-total_sales)]
+
+campaign_impact <- campaign_impact[
+  dt_selected_campaign_descriptions, 
+  on = "campaign_id"
+]
+
+
+top_campaigns <- head(campaign_impact, 5)
+
+
+bottom_campaigns <- tail(campaign_impact, 5)
+top_campaigns
+```
+
+```{r}
+bottom_campaigns
+```
+
+```{r}
+combined_campaigns <- rbind(top_campaigns, bottom_campaigns)
+
+top_campaigns
+```
+
+```{r}
+bottom_campaigns
+```
+
+```{r}
+top_transactions_plot <- ggplot(top_campaigns, aes(x = reorder(campaign_type, -total_transactions), y = total_transactions, fill = as.factor(campaign_type))) +
+  geom_bar(stat = "identity", show.legend = FALSE) +
+  scale_fill_brewer(palette = "Pastel1") +
+  labs(title = "performance Campaigns with Coupons",
+       x = "Campaign Type", 
+       y = "Total Transactions") +
+  theme_minimal() +
+  geom_text(aes(label = scales::dollar(total_transactions)),
+            vjust = -0.5,
+            col = "black",
+            size = 3.5) +
+  geom_point(aes(x = reorder(campaign_type, -total_transactions), y = total_transactions), 
+             color = "black", size = 3, show.legend = FALSE) +
+  theme(
+    plot.title = element_text(face = "bold", size = 16),  # Title settings
+    axis.title.x = element_text(face = "bold", size = 12),  # X-axis label settings
+    axis.title.y = element_text(face = "bold", size = 12)  # Y-axis label settings
+  ) +
+  scale_y_continuous(labels = scales::dollar) 
+
+bottom_transactions_plot <- ggplot(bottom_campaigns, aes(x = reorder(campaign_type, -total_transactions), y = total_transactions, fill = as.factor(campaign_type))) +
+  geom_bar(stat = "identity", show.legend = FALSE) +
+  scale_fill_brewer(palette = "Pastel1") +
+  labs(title = "performance of Campaigns with Coupons",
+       x = "Campaign Type", 
+       y = "Total Transactions") +
+  theme_minimal() +
+  geom_text(aes(label = scales::dollar(total_transactions)),
+            vjust = -0.5,
+            col = "black",
+            size = 3.5) +
+  geom_point(aes(x = reorder(campaign_type, -total_transactions), y = total_transactions), 
+             color = "black", size = 3, show.legend = FALSE)  +
+  theme(
+    plot.title = element_text(face = "bold", size = 16),  # Title settings
+    axis.title.x = element_text(face = "bold", size = 12),  # X-axis label settings
+    axis.title.y = element_text(face = "bold", size = 12)  # Y-axis label settings
+  )  +
+  scale_y_continuous(labels = scales::dollar) 
+
+
+gridExtra::grid.arrange(top_transactions_plot, bottom_transactions_plot, ncol = 1)
+```
+
+Top/Bottom Performing Campains Without Coupons
+```{r}
+setDTthreads(threads = getOption("datatable.threads"))
+options(datatable.allow.cartesian=TRUE)
+
+
+analysis_data_without_coupons <- dt_selected_transactions[
+  !dt_selected_coupon_redemptions, 
+  on = "household_id"
+][
+  dt_selected_demographics, 
+  on = "household_id",
+  nomatch = 0L  
+][
+  dt_selected_campaigns,
+  on = .(household_id = household_id),
+  nomatch = 0L 
+]
+
+
+campaign_impact <- analysis_data_without_coupons[, .(
+    total_sales = sum(sales_value, na.rm = TRUE),
+    total_transactions = .N,
+    avg_sales_per_transaction = mean(sales_value, na.rm = TRUE),
+    total_quantity = sum(quantity, na.rm = TRUE)
+  ), by = campaign_id
+][order(-total_sales)]
+
+campaign_impact <- campaign_impact[
+  dt_selected_campaign_descriptions, 
+  on = "campaign_id"
+]
+
+
+top_campaigns <- head(campaign_impact, 5)
+
+
+bottom_campaigns <- tail(campaign_impact, 5)
+
+
+combined_campaigns <- rbind(top_campaigns, bottom_campaigns)
+
+top_campaigns
+```
+
+```{r}
+top_transactions_plot <- ggplot(top_campaigns, aes(x = reorder(campaign_type, -total_transactions), y = total_transactions, fill = as.factor(campaign_type))) +
+  geom_bar(stat = "identity", show.legend = FALSE) +
+  scale_fill_brewer(palette = "Pastel1") +
+  labs(title = "performance of Campaigns without Coupons",
+       x = "Campaign Type", 
+       y = "Total Transactions") +
+  theme_minimal() +
+  geom_text(aes(label = scales::comma(total_transactions)),
+            vjust = -0.5,
+            col = "black",
+            size = 3.5) +
+  geom_point(aes(x = reorder(campaign_type, -total_transactions), y = total_transactions + 200), 
+             color = "black", size = 3, show.legend = FALSE)  +
+  theme(
+    plot.title = element_text(face = "bold", size = 16),  # Title settings
+    axis.title.x = element_text(face = "bold", size = 12),  # X-axis label settings
+    axis.title.y = element_text(face = "bold", size = 12)  # Y-axis label settings
+  )  +
+  scale_y_continuous(labels = scales::dollar) 
+
+
+bottom_transactions_plot <- ggplot(bottom_campaigns, aes(x = reorder(campaign_type, -total_transactions), y = total_transactions, fill = as.factor(campaign_type))) +
+  geom_bar(stat = "identity", show.legend = FALSE) +
+  scale_fill_brewer(palette = "Pastel1") +
+  labs(title = "performance of Campaigns without Coupons",
+       x = "Campaign Type", 
+       y = "Total Transactions") +
+  theme_minimal() +
+  geom_text(aes(label = scales::comma(total_transactions)),
+            vjust = -0.5,
+            col = "black",
+            size = 3.5) +
+  geom_point(aes(x = reorder(campaign_type, -total_transactions), y = total_transactions + 200), 
+             color = "black", size = 3, show.legend = FALSE)  +
+  theme(
+    plot.title = element_text(face = "bold", size = 16),  # Title settings
+    axis.title.x = element_text(face = "bold", size = 12),  # X-axis label settings
+    axis.title.y = element_text(face = "bold", size = 12)  # Y-axis label settings
+  )  +
+  scale_y_continuous(labels = scales::dollar)
+
+
+gridExtra::grid.arrange(top_transactions_plot, bottom_transactions_plot, ncol = 1)
+```
+
+2. Are there specific customer demographics that are more responsive to particular campaigns or promotions?
+Transactions with coupons with different age groups and income
+```{r}
+setDTthreads(threads = getOption("datatable.threads"))
+options(datatable.allow.cartesian=TRUE)
+
+
+analysis_data_with_coupons <- dt_selected_transactions[
+  dt_selected_coupon_redemptions, 
+  on = "household_id",
+  nomatch = 0L
+]
+
+
+campaign_impact <- analysis_data_with_coupons[, .(
+    total_sales = sum(sales_value, na.rm = TRUE),
+    total_transactions = .N,
+    avg_sales_per_transaction = mean(sales_value, na.rm = TRUE),
+    total_quantity = sum(quantity, na.rm = TRUE)
+  ), by = .(campaign_id,household_id)
+][order(-total_sales)]
+
+campaign_impact <- campaign_impact[
+  dt_selected_campaign_descriptions, 
+  on = "campaign_id"
+]
+
+
+analysis_data <- campaign_impact[
+  dt_selected_demographics, 
+  on = "household_id",
+  nomatch = 0L
+]
+
+
+demographic_campaign_impact <- analysis_data[, .(
+    total_sales = sum(total_sales, na.rm = TRUE),
+    total_transactions = .N,
+    avg_sales_per_transaction = mean(total_sales, na.rm = TRUE),
+    total_quantity = sum(total_quantity, na.rm = TRUE)
+  ), by = .(age, income, campaign_type) 
+]
+
+demographic_campaign_impact
+```
+
+```{r}
+# Visualization (Impact of campaign type on different age groups)
+ggplot(demographic_campaign_impact, aes(x = campaign_type, y = total_sales, fill = age)) +
+  geom_bar(stat = "identity", position = position_dodge(), show.legend = TRUE) +
+  labs(title = "Impact of Campaign Type(without coupons) \non Different Age Groups",
+       x = "Campaign Type", 
+       y = "Total Sales") +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Pastel1") +
+    theme(
+    plot.title = element_text(face = "bold", size = 16),  # Title settings
+    axis.title.x = element_text(face = "bold", size = 12),  # X-axis label settings
+    axis.title.y = element_text(face = "bold", size = 12)  # Y-axis label settings
+  )  +
+  scale_y_continuous(labels = scales::dollar) 
+```
+
+```{r}
+# Visualization (Impact of campaign type on income range)
+ggplot(demographic_campaign_impact, aes(x = campaign_type, y = total_sales, fill = income)) +
+  geom_bar(stat = "identity", position = position_dodge(), show.legend = TRUE) +
+  labs(title = "Impact of Campaign Type(without coupons) \non Different Income Range",
+       x = "Campaign Type", 
+       y = "Total Sales") +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Pastel1") +
+    theme(
+    plot.title = element_text(face = "bold", size = 16),  # Title settings
+    axis.title.x = element_text(face = "bold", size = 12),  # X-axis label settings
+    axis.title.y = element_text(face = "bold", size = 12)  # Y-axis label settings
+  )  +
+  scale_y_continuous(labels = scales::dollar)
+```
+
+Transactions without coupons with different age groups and income
+```{r}
+setDTthreads(threads = getOption("datatable.threads"))
+options(datatable.allow.cartesian=TRUE)
+
+
+analysis_data_without_coupons <- dt_selected_transactions[
+  !dt_selected_coupon_redemptions, 
+  on = "household_id"
+][
+  dt_selected_demographics, 
+  on = "household_id",
+  nomatch = 0L  
+][
+  dt_selected_campaigns,
+  on = .(household_id = household_id),
+  nomatch = 0L  
+]
+
+
+campaign_impact <- analysis_data_without_coupons[, .(
+    total_sales = sum(sales_value, na.rm = TRUE),
+    total_transactions = .N,
+    avg_sales_per_transaction = mean(sales_value, na.rm = TRUE),
+    total_quantity = sum(quantity, na.rm = TRUE)
+  ), by = .(campaign_id,household_id)
+][order(-total_sales)]
+
+campaign_impact <- campaign_impact[
+  dt_selected_campaign_descriptions, 
+  on = "campaign_id"
+]
+
+
+analysis_data <- campaign_impact[
+  dt_selected_demographics, 
+  on = "household_id",
+  nomatch = 0L
+]
+
+
+demographic_campaign_impact <- analysis_data[, .(
+    total_sales = sum(total_sales, na.rm = TRUE),
+    total_transactions = .N,
+    avg_sales_per_transaction = mean(total_sales, na.rm = TRUE),
+    total_quantity = sum(total_quantity, na.rm = TRUE)
+  ), by = .(age, income, campaign_type) 
+]
+
+demographic_campaign_impact
+```
+
+```{r}
+# Visualization 
+ggplot(demographic_campaign_impact, aes(x = campaign_type, y = total_sales, fill = age)) +
+  geom_bar(stat = "identity", position = position_dodge(), show.legend = TRUE) +
+  labs(title = "Impact of Campaign Type(with coupons) \non Different Age Groups",
+       x = "Campaign Type", 
+       y = "Total Sales") +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Pastel1") +
+    theme(
+    plot.title = element_text(face = "bold", size = 16),  # Title settings
+    axis.title.x = element_text(face = "bold", size = 12),  # X-axis label settings
+    axis.title.y = element_text(face = "bold", size = 12)  # Y-axis label settings
+  )  +
+  scale_y_continuous(labels = scales::dollar)
+```
+
+```{r}
+# Visualization 
+ggplot(demographic_campaign_impact, aes(x = campaign_type, y = total_sales, fill = income)) +
+  geom_bar(stat = "identity", position = position_dodge(), show.legend = TRUE) +
+  labs(title = "Impact of Campaign Type(with coupons) \non Different Income Range",
+       x = "Campaign Type", 
+       y = "Total Sales") +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Pastel1") +
+    theme(
+    plot.title = element_text(face = "bold", size = 16),  # Title settings
+    axis.title.x = element_text(face = "bold", size = 12),  # X-axis label settings
+    axis.title.y = element_text(face = "bold", size = 12)  # Y-axis label settings
+  )  +
+  scale_y_continuous(labels = scales::dollar)
+```
+
+ROI Analysis with coupons
+```{r}
+setDTthreads(threads = getOption("datatable.threads"))
+options(datatable.allow.cartesian=TRUE)
+
+analysis_data_with_coupons <- dt_selected_transactions[
+  dt_selected_coupon_redemptions, 
+  on = "household_id",
+  nomatch = 0L
+]
+
+campaign_impact <- analysis_data_with_coupons[, .(
+    total_sales = sum(sales_value, na.rm = TRUE),
+    total_transactions = .N,
+    avg_sales_per_transaction = mean(sales_value, na.rm = TRUE),
+    total_quantity = sum(quantity, na.rm = TRUE),
+    total_campaign_cost = sum(campaign_cost, na.rm = TRUE),
+    net_profit = sum(net_profit, na.rm = TRUE),
+    ROI = (sum(net_profit, na.rm = TRUE) / sum(campaign_cost, na.rm = TRUE)) * 100
+  ), by = campaign_id
+][order(-total_sales)]
+
+
+campaign_impact <- campaign_impact[
+  dt_selected_campaign_descriptions, 
+  on = "campaign_id"
+]
+
+
+print(head(campaign_impact))
+
+```
+
+```{r}
+ggplot(campaign_impact, aes(x = campaign_type, y = ROI, fill = campaign_type)) +
+  geom_bar(stat = "identity", show.legend = FALSE) +
+  scale_fill_brewer(palette = "Pastel1") +
+  labs(title = "ROI for Different Campaigns",
+       x = "Campaign Type", 
+       y = "ROI (%)") +
+  theme_minimal()  +
+    theme(
+    plot.title = element_text(face = "bold", size = 16),  # Title settings
+    axis.title.x = element_text(face = "bold", size = 12),  # X-axis label settings
+    axis.title.y = element_text(face = "bold", size = 12)  # Y-axis label settings
+  ) +
+  scale_y_continuous(labels = scales::percent_format(scale = 1))
+```
+
+```{r}
+ggplot(campaign_impact, aes(x = total_campaign_cost, y = total_sales, color = campaign_type)) +
+  geom_point(size = 3) +
+  scale_fill_brewer(palette = "Pastel1") +
+  labs(title = "Total Sales vs. Total Campaign Cost",
+       x = "Total Campaign Cost", 
+       y = "Total Sales") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", size = 16),  
+    axis.title.x = element_text(face = "bold", size = 12),  
+    axis.title.y = element_text(face = "bold", size = 12),
+    axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)
+  ) +
+  facet_wrap(~campaign_type) +
+  scale_y_continuous(labels = scales::dollar, trans = "log10") +  # Logarithmic scale on y-axis
+  scale_x_continuous(labels = scales::dollar, trans = "log10") +  # Logarithmic scale on x-axis
+  guides(color = guide_legend(title = "Campaign Type"))
+```
+
+Conversion Rate
+```{r}
+targeted_households <- dt_selected_campaigns[, .N, by = campaign_id]
+
+converting_households <- dt_selected_transactions[dt_selected_campaigns, on = "household_id", nomatch = 0L
+                                                  ][, .N, by = campaign_id]
+
+conversion_rate_data <- targeted_households[converting_households, on = "campaign_id"
+                                            ][, conversion_rate := (N / i.N) * 100]
+
+
+conversion_rate_data <- conversion_rate_data[dt_selected_campaign_descriptions, on = "campaign_id"]
+
+conversion_rate_data
+```
+
+```{r}
+# Visualization of conversion rates per campaign without numbers on top
+conversion_rate_data <- targeted_households[converting_households, on = "campaign_id"
+                                            ][, conversion_rate := (N / i.N) * 100]
+
+# Merge with campaign descriptions for better readability in plots
+conversion_rate_data <- conversion_rate_data[dt_selected_campaign_descriptions, on = "campaign_id"]
+
+# Visualization of conversion rates per campaign without numbers on top
+ggplot(conversion_rate_data, aes(x = reorder(campaign_type, -conversion_rate), y = conversion_rate, fill = campaign_type)) +
+  geom_bar(stat = "identity", show.legend = FALSE) +
+  scale_fill_brewer(palette = "Pastel1") +
+  labs(title = "Conversion Rate for Different Campaigns",
+       x = "Campaign Type", 
+       y = "Conversion Rate (%)") +
+  theme_minimal() +
+    theme(
+    plot.title = element_text(face = "bold", size = 16),  # Title settings
+    axis.title.x = element_text(face = "bold", size = 12),  # X-axis label settings
+    axis.title.y = element_text(face = "bold", size = 12)  # Y-axis label settings
+  ) +
+  scale_y_continuous(labels = scales::percent_format(scale=1))
+```
+
+
